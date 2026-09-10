@@ -1,0 +1,10 @@
+{
+  "name": "bluemarket/cms-lab",
+  "description": "BlueMarket CMS SQLi to RCE lab application",
+  "type": "project",
+  "require": {
+    "php": "^8.2",
+    "ext-pgsql": "*",
+    "ext-pdo_sqlite": "*"
+  }
+}
