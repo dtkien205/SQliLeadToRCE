@@ -45,4 +45,4 @@ Activity dùng `app_user`, không dùng `extension_user`, nên không có quyề
 - Không grant `pg_execute_server_program` cho `app_user`.
 - Không dùng `LANGUAGE C` từ role ứng dụng.
 - SQLite cache nằm ngoài webroot.
-- Upload fixed mode chỉ nhận media extension hợp lệ.
+- Upload fixed mode chỉ nhận media file hợp lệ, kiểm tra MIME thật, giới hạn 2 MB và đổi filename random.

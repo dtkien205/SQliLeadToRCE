@@ -41,13 +41,16 @@ Upload vulnerable:
 
 ```php
 if ($mode === 'fixed') {
-    $allowed = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+    $allowed = ['jpg' => ['image/jpeg'], 'png' => ['image/png'], ...];
+    // extension, size và MIME không hợp lệ sẽ bị từ chối
+    // target file được đổi sang tên random
 }
 
 move_uploaded_file((string) $file['tmp_name'], $target);
 ```
 
-Trong vulnerable mode, upload không chặn extension `.php`.
+Trong vulnerable mode, block fixed này không chạy nên upload vẫn giữ filename
+người dùng gửi lên và không chặn extension `.php`.
 
 #### Phân tích source và điều kiện cần
 
@@ -86,8 +89,9 @@ $name = basename((string) $file['name']);
 $target = $this->dir . '/' . $name;
 
 if ($mode === 'fixed') {
-    $allowed = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-    // extension không nằm trong allow-list sẽ bị từ chối
+    $allowed = ['jpg' => ['image/jpeg'], 'png' => ['image/png'], ...];
+    // extension, size và MIME không hợp lệ sẽ bị từ chối
+    // target file được đổi sang tên random
 }
 
 move_uploaded_file((string) $file['tmp_name'], $target);
@@ -197,7 +201,7 @@ $target = $this->dir . '/' . $name;
 move_uploaded_file((string) $file['tmp_name'], $target);
 ```
 
-Trong UploadService.php, dòng này lấy path đó ra:
+Trong `config.php`, `paths.uploads` trỏ tới thư mục upload dưới webroot:
 
 ```php
 'uploads' => dirname(__DIR__) . '/public/uploads'
@@ -256,13 +260,21 @@ $user = $db->paramsOne('SELECT * FROM users WHERE username = $1', [$username]);
 
 Username chỉ còn là dữ liệu, không thể `UNION SELECT`.
 
-Upload fixed mode chỉ cho phép media extension:
+Upload fixed mode kiểm tra extension, MIME thật, kích thước file và đổi filename
+random:
 
 ```php
-$allowed = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+$allowed = [
+    'jpg' => ['image/jpeg'],
+    'jpeg' => ['image/jpeg'],
+    'png' => ['image/png'],
+    'gif' => ['image/gif'],
+    'webp' => ['image/webp'],
+];
 ```
 
-File `shell.php` sẽ bị từ chối.
+File `shell.php` sẽ bị từ chối vì sai extension. File giả như `shell.png` cũng
+bị từ chối nếu MIME không phải ảnh hợp lệ.
 
 Tóm tắt root cause:
 
