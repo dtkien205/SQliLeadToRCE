@@ -5,7 +5,8 @@ CREATE ROLE extension_user LOGIN SUPERUSER PASSWORD 'extension_user_password';
 GRANT pg_execute_server_program TO report_user;
 GRANT CONNECT ON DATABASE bluemarket TO app_user, report_user, extension_user;
 GRANT USAGE ON SCHEMA public TO app_user, report_user, extension_user;
-GRANT CREATE ON SCHEMA public TO report_user, extension_user;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+GRANT CREATE ON SCHEMA public TO extension_user;
 
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
@@ -55,6 +56,12 @@ CREATE TABLE report_templates (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE report_worker_output (
+    id BIGSERIAL PRIMARY KEY,
+    line TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 INSERT INTO users (username, email, password_hash, role, description) VALUES
     ('admin', 'admin@bluemarket.local', 'admin123', 'admin', 'Operations administrator for catalog, media, templates, and system reports.'),
     ('analyst', 'analyst@bluemarket.local', 'analyst123', 'member', 'Internal analyst tracking search performance and marketplace data.'),
@@ -90,12 +97,17 @@ INSERT INTO report_templates (type, label, description, query_name) VALUES
     ('sellers', 'Seller Activity', 'Seller activity powered by the profile/report backend.', 'report_seller_activity');
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_user;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO report_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO report_user;
+GRANT INSERT ON report_worker_output TO report_user;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO extension_user;
-GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO app_user, report_user, extension_user;
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO app_user, extension_user;
+GRANT USAGE, SELECT, UPDATE ON SEQUENCE report_worker_output_id_seq TO report_user;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
-    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user, report_user, extension_user;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user, extension_user;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT SELECT ON TABLES TO report_user;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
     GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO app_user, report_user, extension_user;

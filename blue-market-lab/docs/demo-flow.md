@@ -18,9 +18,8 @@ Database role vulnerable mode: report_user
 ```text
 SQLi trong report filter
 -> stacked query
--> CREATE TABLE chứa output
--> COPY table FROM PROGRAM '<command>'
--> SELECT output từ table
+-> COPY report_worker_output(line) FROM PROGRAM '<command>'
+-> SELECT output từ worker log table
 -> RCE
 ```
 
@@ -33,7 +32,7 @@ $sql = "SELECT type, label, description, query_name
         ORDER BY id";
 ```
 
-Role `report_user` được grant `pg_execute_server_program`, nên lab có thể chứng minh command execution bằng các lệnh an toàn như `id`, `whoami`, `hostname`, hoặc `pwd`. Nếu payload tạo bảng `cmd_output`, trang Reports sẽ đọc và hiển thị output ở khối Worker Output.
+Role `report_user` được grant `pg_execute_server_program`, nên lab có thể chứng minh command execution bằng các lệnh an toàn như `id`, `whoami`, `hostname`, hoặc `pwd`. Bảng `report_worker_output` là log output có sẵn của worker; trang Reports đọc các dòng mới nhất và hiển thị ở khối Worker Output.
 
 Trong fixed mode, controller dùng parameterized query và kết nối bằng `app_user`, role không có `pg_execute_server_program`.
 

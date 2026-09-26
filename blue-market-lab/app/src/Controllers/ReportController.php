@@ -69,11 +69,13 @@ final class ReportController extends BaseController
         }
 
         try {
-            if (!$db->tableExists('cmd_output')) {
+            if (!$db->tableExists('report_worker_output')) {
                 return [];
             }
 
-            return $db->queryAll('SELECT line FROM cmd_output LIMIT 50');
+            return $db->queryAll(
+                'SELECT line FROM report_worker_output ORDER BY id DESC LIMIT 50'
+            );
         } catch (\Throwable) {
             return [];
         }

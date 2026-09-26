@@ -23,7 +23,7 @@ $templates = $db->queryAll($sql);
 
 Vị trí: `app/src/Controllers/ReportController.php`
 
-Đây là điểm demo Method 1 trong `command_execution_postgresql.md`: SQLi có thể chạm tới `COPY FROM PROGRAM` nếu role database có quyền.
+Đây là điểm demo Method 1: SQLi có thể chạm tới `COPY FROM PROGRAM` nếu role database có quyền. Output được ghi vào bảng log worker `report_worker_output` đã tồn tại trong schema, rồi trang Reports đọc lại bảng này.
 
 ## Seller activity report
 

