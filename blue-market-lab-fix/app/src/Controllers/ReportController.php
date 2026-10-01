@@ -13,39 +13,30 @@ final class ReportController extends BaseController
         $this->requireAdmin();
 
         $type = (string) ($_GET['type'] ?? 'health');
-        $db = new PostgresService($this->isFixed() ? 'app' : 'report');
+        $db = new PostgresService('app');
         $error = null;
 
         try {
-            if ($this->isFixed()) {
-                $templates = $db->params(
-                    'SELECT type, label, description, query_name
-                     FROM report_templates
-                     WHERE type = $1
-                     ORDER BY id',
-                    [$type]
-                );
-            } else {
-                $sql = "SELECT type, label, description, query_name
-                        FROM report_templates
-                        WHERE type = '" . $type . "'
-                        ORDER BY id";
-                $templates = $db->queryAll($sql);
-            }
+            $templates = $db->params(
+                'SELECT type, label, description, query_name
+                 FROM report_templates
+                 WHERE type = $1
+                 ORDER BY id',
+                [$type]
+            );
         } catch (\Throwable $exception) {
             $templates = [];
-            $error = $this->isFixed() ? 'The report could not be loaded.' : $exception->getMessage();
+            $error = 'The report could not be loaded.';
         }
 
         $stats = $this->collectStats();
-        $commandOutput = $this->readCommandOutput($db);
 
         $this->render('admin/reports', [
             'title' => 'Reports',
             'type' => $type,
             'templates' => $templates,
             'stats' => $stats,
-            'commandOutput' => $commandOutput,
+            'commandOutput' => [],
             'error' => $error,
         ]);
     }
@@ -60,24 +51,5 @@ final class ReportController extends BaseController
             'Orders' => $db->paramsOne('SELECT count(*) AS value FROM orders', [])['value'] ?? 0,
             'Worker' => 'online',
         ];
-    }
-
-    private function readCommandOutput(PostgresService $db): array
-    {
-        if ($this->isFixed()) {
-            return [];
-        }
-
-        try {
-            if (!$db->tableExists('report_worker_output')) {
-                return [];
-            }
-
-            return $db->queryAll(
-                'SELECT line FROM report_worker_output ORDER BY id DESC LIMIT 50'
-            );
-        } catch (\Throwable) {
-            return [];
-        }
     }
 }

@@ -6,7 +6,7 @@ $env = static fn (string $key, string $default): string => getenv($key) !== fals
 
 return [
     'app_name' => 'BlueMarket CMS',
-    'app_mode' => $env('APP_MODE', 'vulnerable'),
+    'app_mode' => 'fixed',
     'pg' => [
         'host' => $env('PG_HOST', 'postgres'),
         'port' => $env('PG_PORT', '5432'),

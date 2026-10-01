@@ -13,28 +13,18 @@ final class ReportController extends BaseController
         $this->requireAdmin();
 
         $type = (string) ($_GET['type'] ?? 'health');
-        $db = new PostgresService($this->isFixed() ? 'app' : 'report');
+        $db = new PostgresService('report');
         $error = null;
 
         try {
-            if ($this->isFixed()) {
-                $templates = $db->params(
-                    'SELECT type, label, description, query_name
-                     FROM report_templates
-                     WHERE type = $1
-                     ORDER BY id',
-                    [$type]
-                );
-            } else {
-                $sql = "SELECT type, label, description, query_name
-                        FROM report_templates
-                        WHERE type = '" . $type . "'
-                        ORDER BY id";
-                $templates = $db->queryAll($sql);
-            }
+            $sql = "SELECT type, label, description, query_name
+                    FROM report_templates
+                    WHERE type = '" . $type . "'
+                    ORDER BY id";
+            $templates = $db->queryAll($sql);
         } catch (\Throwable $exception) {
             $templates = [];
-            $error = $this->isFixed() ? 'The report could not be loaded.' : $exception->getMessage();
+            $error = $exception->getMessage();
         }
 
         $stats = $this->collectStats();
@@ -64,10 +54,6 @@ final class ReportController extends BaseController
 
     private function readCommandOutput(PostgresService $db): array
     {
-        if ($this->isFixed()) {
-            return [];
-        }
-
         try {
             if (!$db->tableExists('report_worker_output')) {
                 return [];

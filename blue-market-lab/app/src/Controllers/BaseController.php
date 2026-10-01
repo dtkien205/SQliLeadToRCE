@@ -16,7 +16,7 @@ abstract class BaseController
         }
 
         $config = \app_config();
-        $mode = \app_config('app_mode', 'vulnerable');
+        $mode = 'vulnerable';
         $currentUser = \current_user();
         $flash = \flash();
 
@@ -31,12 +31,7 @@ abstract class BaseController
 
     protected function mode(): string
     {
-        return (string) \app_config('app_mode', 'vulnerable');
-    }
-
-    protected function isFixed(): bool
-    {
-        return $this->mode() === 'fixed';
+        return 'vulnerable';
     }
 
     protected function requireAdmin(): void
@@ -51,10 +46,8 @@ abstract class BaseController
     {
         $this->render('error', [
             'title' => 'System Error',
-            'message' => $this->isFixed()
-                ? 'The system could not complete the request.'
-                : $exception->getMessage(),
-            'details' => $this->isFixed() ? null : $exception->getTraceAsString(),
+            'message' => $exception->getMessage(),
+            'details' => $exception->getTraceAsString(),
         ]);
     }
 

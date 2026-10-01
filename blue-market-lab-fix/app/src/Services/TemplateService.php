@@ -26,11 +26,11 @@ final class TemplateService
         ], $files);
     }
 
-    public function save(string $name, string $content, string $mode): void
+    public function save(string $name, string $content): void
     {
         $name = basename($name ?: 'campaign.html');
 
-        if ($mode === 'fixed' && !preg_match('/^[a-z0-9_-]+\.html$/i', $name)) {
+        if (!preg_match('/^[a-z0-9_-]+\.html$/i', $name)) {
             throw new \InvalidArgumentException('Invalid template name.');
         }
 

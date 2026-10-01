@@ -27,44 +27,27 @@ final class ProfileController extends BaseController
         $id = (string) ($_GET['id'] ?? (current_user()['id'] ?? '1'));
         $userDb = new PostgresService();
 
-        if ($this->isFixed()) {
-            $user = $userDb->paramsOne(
-                'SELECT id, username, email, role, description FROM users WHERE id = $1',
-                [$id]
-            );
-        } else {
-            $user = $userDb->queryOne(
-                'SELECT id, username, email, role, description FROM users WHERE id = ' . $id
-            );
-        }
+        $user = $userDb->queryOne(
+            'SELECT id, username, email, role, description FROM users WHERE id = ' . $id
+        );
 
         if (!$user) {
             $this->notFound();
             return;
         }
 
-        $activityDb = new PostgresService($this->isFixed() ? 'app' : 'extension');
+        $activityDb = new PostgresService('extension');
         $activityError = null;
 
         try {
-            if ($this->isFixed()) {
-                $activity = $activityDb->params(
-                    'SELECT title, body, created_at
-                     FROM posts
-                     WHERE author_email = $1
-                     ORDER BY created_at DESC',
-                    [$user['email']]
-                );
-            } else {
-                $sql = "SELECT title, body, created_at
-                        FROM posts
-                        WHERE author_email = '" . $user['email'] . "'
-                        ORDER BY created_at DESC";
-                $activity = $activityDb->queryAll($sql);
-            }
+            $sql = "SELECT title, body, created_at
+                    FROM posts
+                    WHERE author_email = '" . $user['email'] . "'
+                    ORDER BY created_at DESC";
+            $activity = $activityDb->queryAll($sql);
         } catch (\Throwable $exception) {
             $activity = [];
-            $activityError = $this->isFixed() ? 'The activity report could not be loaded.' : $exception->getMessage();
+            $activityError = $exception->getMessage();
         }
 
         $products = $userDb->params(
@@ -91,11 +74,6 @@ final class ProfileController extends BaseController
 
         $email = trim((string) ($_POST['email'] ?? ''));
         $description = trim((string) ($_POST['description'] ?? ''));
-
-        if ($this->isFixed() && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            \flash('Fixed mode requires a valid email address.');
-            \redirect('/profile?id=' . $currentUser['id']);
-        }
 
         $db = new PostgresService();
         $db->executeParams(

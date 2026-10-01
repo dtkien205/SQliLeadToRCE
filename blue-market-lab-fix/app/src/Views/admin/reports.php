@@ -61,7 +61,7 @@
                     </tr>
                     <tr>
                         <td>Role</td>
-                        <td><?= h($mode === 'fixed' ? 'app_user' : 'report_user') ?></td>
+                        <td>app_user</td>
                     </tr>
                     <tr>
                         <td>Primitive</td>

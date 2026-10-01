@@ -42,7 +42,7 @@ final class AdminController extends BaseController
     public function uploadMedia(): void
     {
         $this->requireAdmin();
-        (new UploadService())->store($_FILES['media'] ?? [], $this->mode());
+        (new UploadService())->store($_FILES['media'] ?? []);
         \flash('Media has been saved.');
         \redirect('/admin/media');
     }
@@ -63,8 +63,7 @@ final class AdminController extends BaseController
         $this->requireAdmin();
         (new TemplateService())->save(
             (string) ($_POST['name'] ?? 'campaign.html'),
-            (string) ($_POST['content'] ?? ''),
-            $this->mode()
+            (string) ($_POST['content'] ?? '')
         );
 
         \flash('Template has been saved.');

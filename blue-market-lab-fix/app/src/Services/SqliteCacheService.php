@@ -10,7 +10,7 @@ final class SqliteCacheService
 {
     private PDO $pdo;
 
-    public function __construct(private readonly string $mode)
+    public function __construct()
     {
         $path = (string) \app_config('paths.sqlite');
         $dir = dirname($path);
@@ -32,14 +32,8 @@ final class SqliteCacheService
 
     public function logSearch(string $keyword): void
     {
-        if ($this->mode === 'fixed') {
-            $stmt = $this->pdo->prepare('INSERT INTO search_logs(keyword, created_at) VALUES (:keyword, datetime("now"))');
-            $stmt->execute(['keyword' => $keyword]);
-            return;
-        }
-    
-        $sql = "INSERT INTO search_logs(keyword, created_at) VALUES ('" . $keyword . "', datetime('now'))";
-        $this->pdo->exec($sql);
+        $stmt = $this->pdo->prepare('INSERT INTO search_logs(keyword, created_at) VALUES (:keyword, datetime("now"))');
+        $stmt->execute(['keyword' => $keyword]);
     }
 
     public function recentSearches(int $limit = 8): array

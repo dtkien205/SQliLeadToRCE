@@ -19,11 +19,7 @@ final class AuthController extends BaseController
         $password = (string) ($_POST['password'] ?? '');
         $db = new PostgresService();
 
-        if ($this->isFixed()) {
-            $user = $db->paramsOne('SELECT * FROM users WHERE username = $1', [$username]);
-        } else {
-            $user = $db->queryOne("SELECT * FROM users WHERE username = '" . $username . "'");
-        }
+        $user = $db->paramsOne('SELECT * FROM users WHERE username = $1', [$username]);
 
         if (!$user || !$this->passwordMatches($password, (string) $user['password_hash'])) {
             \flash('Invalid username or password.');
@@ -56,8 +52,8 @@ final class AuthController extends BaseController
             \redirect('/register');
         }
 
-        if ($this->isFixed() && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            \flash('Fixed mode requires a valid email address.');
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            \flash('Please provide a valid email address.');
             \redirect('/register');
         }
 
