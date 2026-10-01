@@ -1,0 +1,4 @@
+input=D:\SQL-lead-to-RCE\blue-market-lab\postgres\artifacts\pg_rev_shell.so
+size_bytes=16144
+page_size=2048
+page_count=8
