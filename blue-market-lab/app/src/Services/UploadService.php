@@ -32,9 +32,11 @@ final class UploadService
             throw new \RuntimeException('No valid file was provided for upload.');
         }
 
+        // vuln upload
         $name = basename((string) $file['name']);
         $target = $this->dir . '/' . $name;
 
+        // save file without validating file type
         if (!move_uploaded_file((string) $file['tmp_name'], $target)) {
             throw new \RuntimeException('The uploaded file could not be saved.');
         }

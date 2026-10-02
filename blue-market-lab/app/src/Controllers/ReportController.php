@@ -12,10 +12,12 @@ final class ReportController extends BaseController
     {
         $this->requireAdmin();
 
+        // vuln
         $type = (string) ($_GET['type'] ?? 'health');
         $db = new PostgresService('report');
         $error = null;
 
+        // vuln
         try {
             $sql = "SELECT type, label, description, query_name
                     FROM report_templates
@@ -52,6 +54,8 @@ final class ReportController extends BaseController
         ];
     }
 
+
+    // report
     private function readCommandOutput(PostgresService $db): array
     {
         try {

@@ -30,9 +30,12 @@ final class SqliteCacheService
         );
     }
 
+    // fix
     public function logSearch(string $keyword): void
     {
-        $stmt = $this->pdo->prepare('INSERT INTO search_logs(keyword, created_at) VALUES (:keyword, datetime("now"))');
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO search_logs(keyword, created_at) VALUES (:keyword, datetime("now"))'
+        );
         $stmt->execute(['keyword' => $keyword]);
     }
 

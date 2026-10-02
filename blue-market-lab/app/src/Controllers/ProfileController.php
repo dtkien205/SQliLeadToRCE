@@ -36,9 +36,11 @@ final class ProfileController extends BaseController
             return;
         }
 
+        // vuln
         $activityDb = new PostgresService('extension');
         $activityError = null;
 
+        //vuln
         try {
             $sql = "SELECT title, body, created_at
                     FROM posts
@@ -76,6 +78,7 @@ final class ProfileController extends BaseController
         $description = trim((string) ($_POST['description'] ?? ''));
 
         $db = new PostgresService();
+        // update email
         $db->executeParams(
             'UPDATE users SET email = $1, description = $2 WHERE id = $3',
             [$email, $description, $currentUser['id']]

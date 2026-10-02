@@ -30,6 +30,7 @@ final class SqliteCacheService
         );
     }
 
+    // vuln
     public function logSearch(string $keyword): void
     {
         $sql = "INSERT INTO search_logs(keyword, created_at) VALUES ('" . $keyword . "', datetime('now'))";
