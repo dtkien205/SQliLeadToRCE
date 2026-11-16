@@ -8,7 +8,7 @@ GRANT USAGE ON SCHEMA public TO app_user, report_user, extension_user;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT CREATE ON SCHEMA public TO extension_user;
 
-CREATE TABLE users (
+CREATE TABLE users ( 
     id SERIAL PRIMARY KEY,
     username TEXT NOT NULL UNIQUE,
     email TEXT NOT NULL,

@@ -39,7 +39,7 @@ final class ProfileController extends BaseController
         // vuln
         $activityDb = new PostgresService('extension');
         $activityError = null;
-
+ 
         //vuln
         try {
             $sql = "SELECT title, body, created_at

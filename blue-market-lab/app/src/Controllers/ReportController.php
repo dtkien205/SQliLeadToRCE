@@ -9,7 +9,7 @@ use App\Services\PostgresService;
 final class ReportController extends BaseController
 {
     public function system(): void
-    {
+    { 
         $this->requireAdmin();
 
         // vuln

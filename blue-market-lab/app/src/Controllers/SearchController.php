@@ -25,7 +25,7 @@ final class SearchController extends BaseController
             'products' => $products,
         ]);
     }
-
+ 
     public function search(): void
     {
         $q = trim((string) ($_GET['q'] ?? ''));

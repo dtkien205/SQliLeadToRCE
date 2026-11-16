@@ -19,6 +19,8 @@ final class AuthController extends BaseController
         $password = (string) ($_POST['password'] ?? '');
         $db = new PostgresService();
 
+
+        // fix
         $user = $db->paramsOne('SELECT * FROM users WHERE username = $1', [$username]);
 
         if (!$user || !$this->passwordMatches($password, (string) $user['password_hash'])) {
@@ -74,8 +76,9 @@ final class AuthController extends BaseController
         \redirect('/');
     }
 
+    // fix
     private function passwordMatches(string $password, string $stored): bool
     {
-        return password_verify($password, $stored) || hash_equals($stored, $password);
+        return password_verify($password, $stored);
     }
 }

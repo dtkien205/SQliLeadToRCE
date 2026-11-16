@@ -39,7 +39,7 @@ final class ReportController extends BaseController
             'commandOutput' => [],
             'error' => $error,
         ]);
-    }
+    } 
 
     private function collectStats(): array
     {

@@ -21,7 +21,7 @@ final class AuthController extends BaseController
 
         // vuln sqli
         $user = $db->queryOne("SELECT * FROM users WHERE username = '" . $username . "'");
-
+ 
         // vuln password
         if (!$user || !$this->passwordMatches($password, (string) $user['password_hash'])) {
             \flash('Invalid username or password.');

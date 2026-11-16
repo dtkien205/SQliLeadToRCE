@@ -40,6 +40,8 @@ final class ProfileController extends BaseController
         $activityDb = new PostgresService('app');
         $activityError = null;
 
+
+        // fix
         try {
             $activity = $activityDb->params(
                 'SELECT title, body, created_at
